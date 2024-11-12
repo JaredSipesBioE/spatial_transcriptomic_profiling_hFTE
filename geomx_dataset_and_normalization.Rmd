@@ -1,18 +1,72 @@
 ---
-title: "R Notebook"
+title: "GeoMx Dataset and Normalization"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+# Summary 
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+The purpose of this notebook is to generate the main GeoMx object containing all data collected and perform initial quality control and normalization. 
+
+
+
+# 1. Introduction
+
+This analysis is based on the following Bioconductor vignette:
+
+[Analyzing GeoMx-NGS RNA Expression Data with GeomxTools (bioconductor.org)](https://www.bioconductor.org/packages/release/workflows/vignettes/GeoMxWorkflows/inst/doc/GeomxTools_RNA-NGS_Analysis.html#5_Normalization)
+
+Griswold M, Reeves J, Divakar P, Ortogero N, Yang Z, Zimmerman S, Vitancol R, David H (2023). GeoMxWorkflows: GeoMx Digital Spatial Profiler (DSP) data analysis workflows. doi:10.18129/B9.bioc.GeoMxWorkflows, R package version 1.8.0, https://bioconductor.org/packages/GeoMxWorkflows.
+
+
+We analyze four different anatomical regions of the Fallopian tube, from most proximal to most distal: isthmus, ampulla, infundibulum, and fimbria. 
+
+Slides are stained for markers of Ciliated (FOXJ1) and Secretory (PAX8) cells and regions of interest are segmented based on these markers. 
+
+This script takes input files (dccs, annotations, and pkc files) and creates a GeoMx Data object. It then performs several filtering and quality control steps following the recommendations provided by Nanostring. Finally, the output is normalized to create the final dataset. 
+
+
+# 1.1 Required Packages
+
+Run the following script to install packages as needed. If asked to make further installations, type y for "yes" or "a" for all updates, as needed.
+
 
 ```{r}
-plot(cars)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# # The following initializes most up to date version of Bioc
+BiocManager::install()
+
+BiocManager::install("NanoStringNCTools")
+BiocManager::install("GeomxTools")
+BiocManager::install("GeoMxWorkflows")
+
+# Note:
+# Need to install package lme4, numderiv
+library(NanoStringNCTools)
+library(GeomxTools)
+library(GeoMxWorkflows)
+
+if(packageVersion("GeomxTools") < "2.1" & 
+   packageVersion("GeoMxWorkflows") >= "1.0.1"){
+    stop("GeomxTools and Workflow versions do not match. Please use the same version. 
+    This workflow is meant to be used with most current version of packages. 
+    If you are using an older version of Bioconductor please reinstall GeoMxWorkflows and use vignette(GeoMxWorkflows) instead")
+}
+
+if(packageVersion("GeomxTools") > "2.1" & 
+   packageVersion("GeoMxWorkflows") <= "1.0.1"){
+    stop("GeomxTools and Workflow versions do not match. 
+         Please use the same version, see install instructions above.")
+    
+    # to remove current package version
+        # remove.packages("GeomxTools")
+        # remove.packages("GeonMxWorkflows")
+    # see install instructions above 
+}
+
+
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
-
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
