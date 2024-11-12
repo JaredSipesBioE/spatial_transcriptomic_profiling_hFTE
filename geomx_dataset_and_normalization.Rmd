@@ -177,3 +177,79 @@ all_data <-
 
 ```
 
+Note: The DCC file "DSP-1001660037560-B-A07.dcc" has no counts due to an unresolvable sequencing problem. 
+
+# 2. Study Design
+
+Nanostring recommends checking the PKC files to ensure the expected ones have been loaded.
+
+```{r}
+
+# make sure you loaded knitr using library(knitr)
+
+pkcs <- annotation(all_data)
+modules <- gsub(".pkc", "", pkcs)
+kable(data.frame(PKCs = pkcs, modules = modules))
+
+```
+
+
+```{r}
+# Rename all_data so we don't mess up the original
+
+preQC_data <- all_data
+
+# Access PhenoData
+
+pheno_data <- pData(all_data)
+
+# We should also simplify patient names
+
+pheno_data <- pheno_data |>
+  mutate(
+    shortRegion = fct_recode(region, "Amp" = "Ampulla",
+                              "Inf" = "Infundibulum",
+                              "Fimb" = "Fimbria",
+                              "Isth" = "Isthmus"
+                              )
+    )
+
+# update PhenoData in GeoMx object 
+
+pData(preQC_data) <- pheno_data
+
+
+#Split into all, disc, and valid
+
+
+
+preQC_all <- preQC_data[, pData(preQC_data)$Patient != "P6"]
+
+preQC_discovery <-  preQC_data[, pData(preQC_data)$dataset == "discovery"]
+
+preQC_validation <- preQC_data[, pData(preQC_data)$dataset == "validation"]
+
+
+```
+
+
+```{r}
+
+count_mat <- dplyr::count(pData(preQC_data), Patient, region, segment)
+
+kable(count_mat)
+
+
+```
+
+
+
+Save the Completed  Object;
+
+This is the object for all Anatomical studies, before QC, probe merging, or filtering!
+
+```{r}
+
+save(preQC_data, file = "all_preQC.Rdata")
+
+```
