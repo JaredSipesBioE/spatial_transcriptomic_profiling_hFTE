@@ -70,3 +70,27 @@ if(packageVersion("GeomxTools") > "2.1" &
 ```
 
 
+
+```{r}
+
+# create tables
+library(knitr)
+
+# general data manipulation
+library(tidyverse)
+
+
+# read in files
+library(writexl)
+library(here)
+
+
+# create graphs
+library(ggforce)
+library(umap)
+library(Rtsne)
+library(patchwork)
+
+
+```
+
