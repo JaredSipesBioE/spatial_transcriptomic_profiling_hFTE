@@ -656,3 +656,175 @@ save(all_afterQC, file = "all_data_afterQC.Rdata")
 
 ```
 
+
+
+```{r}
+count_mat_QC1 <- dplyr::count(pData(all_afterQC), Patient, region, segment)
+
+kable(count_mat_QC1)
+
+
+```
+
+
+
+# 4. Probe QC
+
+Before we summarize our data into gene-level count data, we will remove low-performing probes. In short, this QC is an outlier removal process, whereby probes are either removed entirely from the study (global) or from specific segments (local). The QC applies to gene targets for which there are multiple distinct probes representing the count for a gene per segment. In WTA data, one specific probe exists per target gene; thus, Probe QC does not apply to the endogenous genes in the panel. Rather, it is performed on the negative control probes; there are multiple probes representing our negative controls, which do not target any sequence in the genome. These probes enable calculation of the background per segment and will be important for determining gene detection downstream.
+
+After Probe QC, there will always remain at least one probe representing every gene target. In other words, Probe QC never removes genes from your data.
+
+### 4.1 Set Probe QC Flags
+
+A probe is removed globally from the dataset if either of the following is true:
+
+-   the geometric mean of that probe's counts from all segments divided by the geometric mean of all probe counts representing the target from all segments is less than 0.1
+-   the probe is an outlier according to the Grubb's test in at least 20% of the segments A probe is removed locally (from a given segment) if the probe is an outlier according to the Grubb's test in that segment.
+
+We do not typically adjust these QC parameters.
+
+
+
+```{r}
+####DATASET == ALL#####
+
+# Generally keep the qcCutoffs parameters unchanged. Set removeLocalOutliers to 
+# FALSE if you do not want to remove local outliers
+all_afterQC <- setBioProbeQCFlags(all_afterQC, 
+                               qcCutoffs = list(minProbeRatio = 0.1,
+                                                percentFailGrubbs = 20), 
+                               removeLocalOutliers = TRUE)
+
+ProbeQCResults <- fData(all_afterQC)[["QCFlags"]]
+
+# Define QC table for Probe QC
+qc_df <- data.frame(Passed = sum(rowSums(ProbeQCResults[, -1]) == 0),
+                    Global = sum(ProbeQCResults$GlobalGrubbsOutlier),
+                    Local = sum(rowSums(ProbeQCResults[, -2:-1]) > 0
+                                & !ProbeQCResults$GlobalGrubbsOutlier))
+
+
+####DATASET == discovery #####
+
+discovery_afterQC <- setBioProbeQCFlags(discovery_afterQC, 
+                               qcCutoffs = list(minProbeRatio = 0.1,
+                                                percentFailGrubbs = 20), 
+                               removeLocalOutliers = TRUE)
+
+ProbeQCResults_d <- fData(discovery_afterQC)[["QCFlags"]]
+
+# Define QC table for Probe QC
+qc_df_d <- data.frame(Passed = sum(rowSums(ProbeQCResults_d[, -1]) == 0),
+                    Global = sum(ProbeQCResults_d$GlobalGrubbsOutlier),
+                    Local = sum(rowSums(ProbeQCResults_d[, -2:-1]) > 0
+                                & !ProbeQCResults_d$GlobalGrubbsOutlier))
+
+
+
+####DATASET == validation#####
+
+
+validation_afterQC <- setBioProbeQCFlags(validation_afterQC, 
+                               qcCutoffs = list(minProbeRatio = 0.1,
+                                                percentFailGrubbs = 20), 
+                               removeLocalOutliers = TRUE)
+
+ProbeQCResults_v <- fData(validation_afterQC)[["QCFlags"]]
+
+# Define QC table for Probe QC
+qc_df_v <- data.frame(Passed = sum(rowSums(ProbeQCResults_v[, -1]) == 0),
+                    Global = sum(ProbeQCResults_v$GlobalGrubbsOutlier),
+                    Local = sum(rowSums(ProbeQCResults_v[, -2:-1]) > 0
+                                & !ProbeQCResults_v$GlobalGrubbsOutlier))
+
+```
+
+We report the number of global and local outlier probes.
+
+```{r}
+
+qc_df 
+qc_df_d
+qc_df_v
+
+
+
+
+```
+
+
+
+
+
+### 4.2 Exclude Outlier Probes
+
+```{r}
+
+####DATASET == ALL####
+
+#Subset object to exclude all that did not pass Ratio & Global testing
+ProbeQCPassed <- 
+    subset(all_afterQC, 
+           fData(all_afterQC)[["QCFlags"]][,c("LowProbeRatio")] == FALSE &
+               fData(all_afterQC)[["QCFlags"]][,c("GlobalGrubbsOutlier")] == FALSE)
+
+####DATASET == ALL####
+
+dim(all_afterQC)
+dim(ProbeQCPassed)
+#> Features  Samples 
+#>    18641      229
+all_AfterProbeQC <- ProbeQCPassed 
+
+
+####DATASET == Discovery####
+
+#Subset object to exclude all that did not pass Ratio & Global testing
+ProbeQCPassed <- 
+    subset(discovery_afterQC, 
+           fData(discovery_afterQC)[["QCFlags"]][,c("LowProbeRatio")] == FALSE &
+               fData(discovery_afterQC)[["QCFlags"]][,c("GlobalGrubbsOutlier")] == FALSE)
+
+
+dim(discovery_afterQC)
+dim(ProbeQCPassed)
+#> Features  Samples 
+#>    18641      229
+discovery_AfterProbeQC <- ProbeQCPassed 
+
+
+####DATASET == Validation####
+
+#Subset object to exclude all that did not pass Ratio & Global testing
+ProbeQCPassed <- 
+    subset(validation_afterQC, 
+           fData(validation_afterQC)[["QCFlags"]][,c("LowProbeRatio")] == FALSE &
+               fData(validation_afterQC)[["QCFlags"]][,c("GlobalGrubbsOutlier")] == FALSE)
+
+
+dim(validation_afterQC)
+dim(ProbeQCPassed)
+#> Features  Samples 
+#>    18641      229
+validation_AfterProbeQC <- ProbeQCPassed 
+
+
+
+
+
+```
+
+
+
+
+
+```{r}
+
+save(all_AfterProbeQC, file = "all_AfterProbeQC.Rdata")
+
+save(discovery_AfterProbeQC, file = "discovery_AfterProbeQC.Rdata")
+
+save(validation_AfterProbeQC, file = "validation_AfterProbeQC.Rdata")
+
+```
+
