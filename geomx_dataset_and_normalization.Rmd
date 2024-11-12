@@ -250,6 +250,409 @@ This is the object for all Anatomical studies, before QC, probe merging, or filt
 
 ```{r}
 
-save(preQC_data, file = "all_preQC.Rdata")
+#save(preQC_data, file = "all_preQC.Rdata")
 
 ```
+
+
+
+
+## 2.1 Sample Overview
+
+Now that we have loaded the data, we can visually summarize the experimental design for our dataset to look at the different types of samples and ROI/AOI segments that have been profiled. We present this information in a Sankey diagram.
+
+This appears to be broken in the original and I'm not sure how to fix, so we will skip for now.
+
+Might try:
+
+[Sankey Diagram for energy consumption -- the R Graph Gallery (r-graph-gallery.com)](https://r-graph-gallery.com/323-sankey-diagram-with-the-networkd3-library.html)
+
+
+
+
+```{r fig.height=10, fig.width=20}
+
+# function to create Sankey ploy
+create_sankey <- function(geomx_object){
+  
+  count_mat <- dplyr::count(pData(geomx_object), Patient, region = shortRegion, segment)
+  input_table <- gather_set_data(count_mat, 1:3)
+
+  ggplot(input_table, aes(x, id = id, split = y, value = n)) +
+    geom_parallel_sets(aes(fill = region), alpha = 0.5, axis.width = 0.1) +
+    geom_parallel_sets_axes(axis.width = 0.2) +
+    geom_parallel_sets_labels(color = "white", size = 6) +
+    theme_classic(base_size = 20) +
+    theme(legend.position = "bottom",
+          axis.ticks.y = element_blank(),
+          axis.line = element_blank(),
+          axis.text.y = element_blank()) +
+    scale_y_continuous(expand = expansion(0)) +
+    scale_x_discrete(expand = expansion(0)) +
+    labs(x = "", y = "") +
+    annotate(geom = "segment", x = 3.3, xend = 3.3,
+             y = 0, yend = 100, lwd = 2) +
+    annotate(geom = "text", x = 3.2, y = 50, angle = 90, size = 5,
+             hjust = 0.4, label = paste0(sum(count_mat$n), " segments"))
+}
+
+
+Sankey1 <- create_sankey(preQC_data) + ggtitle("All")
+Sankey2 <- create_sankey(preQC_discovery) + ggtitle("discovery")
+Sankey3 <- create_sankey(preQC_validation) + ggtitle("validation")
+
+((Sankey2 / Sankey3) | Sankey1) / guide_area()+
+  plot_layout(guides = 'collect')+
+  plot_layout(heights = c(12,1))
+
+
+
+```
+
+
+
+# 3. QC and Pre-Processing
+
+
+There are three sets of pre-process workflow for GeoMx data. In the first part, faulty segments are removed and genes are selected based on Quality Control.
+
+First, however, we must shift all counts of 0 to 1 (this permits downstream transformations.
+
+```{r}
+
+# shift counts to one
+
+preQC_all <- shiftCountsOne(preQC_all, useDALogic = TRUE)
+
+
+preQC_discovery <- shiftCountsOne(preQC_discovery, useDALogic = TRUE)
+
+
+preQC_validation <- shiftCountsOne(preQC_validation, useDALogic = TRUE)
+
+```
+
+
+
+
+## 3.1 Segment QC
+
+Assess sequencing quality and adequate tissue sampling for every ROI/AOI segment.
+
+Every ROI is tested for:
+
+-   Raw sequencing reads: segments with \> 1000 raw reads are removed
+
+-   \% Aligned, % Trimmed, % Stitched Sequencing Reads: Segments below \~ 80% for one or more of these QC parameters are removed.
+
+-   \% Sequencing Saturation ([1-deduplicated reads/aligned reads]%: segments below \~50% require additional sequencing to capture full sample diversity, not typically analyzed util improved.
+
+-   Negative Count: this is the geometric mean of the several unique negative probes in the GeoMx panel that do not target mRNA and establish the background count level per segment; segments with low negative counts (1-10) are not necessarily removed but may be studied closer for low endogenous gene signal and/or insufficient tissue sampling.
+
+-   No Template Control (NTC) count: values \>1,000 could indicate contamination for the segments associated with this NTC; however, in cases where the NTC count is between 1,000- 10,000, the segments may be used if the NTC data is uniformly low (e.g. 0-2 counts for all probes).
+
+-   Nuclei: \>100 nuclei per segment is generally recommended; however, this cutoff is highly study/tissue dependent and may need to be reduced; what is most important is [consistency in the nuclei distribution for segments within the study.]{.underline}
+
+
+-   Area: generally correlates with nuclei; a strict cutoff is not generally applied based on area.
+
+## 3.2 Select Segment QC
+
+First, we select the QC parameter cutoffs, against which our ROI/AOI segments will be tested and flagged appropriately. We have selected the appropriate study-specific parameters for this study. 
+
+
+```{r}
+
+# Default QC cutoffs are commented in () adjacent to the respective parameters
+# study-specific values were selected after visualizing the QC results in more
+# detail below
+
+QC_params <-
+    list(minSegmentReads = 1000, # Minimum number of reads (1000)
+         percentTrimmed = 80,    # Minimum % of reads trimmed (80%)
+         percentStitched = 80,   # Minimum % of reads stitched (80%)
+         percentAligned = 75,    # Minimum % of reads aligned (80%)
+         percentSaturation = 50, # Minimum sequencing saturation (50%)
+         minNegativeCount = 1,   # Minimum negative control counts (10)
+         maxNTCCount = 3000,     # Maximum counts observed in NTC well (1000)
+         minNuclei = 20,         # Minimum # of nuclei estimated (100)
+         minArea = 1000)         # Minimum segment area (5000)
+
+
+#ALL Flags
+preQC_all <-
+    setSegmentQCFlags(preQC_all, 
+                      qcCutoffs = QC_params)
+# Discovery Flags
+
+preQC_discovery <-
+    setSegmentQCFlags(preQC_discovery, 
+                      qcCutoffs = QC_params)     
+
+# Validation Flags
+
+preQC_validation <-
+    setSegmentQCFlags(preQC_validation, 
+                      qcCutoffs = QC_params)  
+
+
+
+# Collate QC Results
+QCResults_All <- protocolData(preQC_all)[["QCFlags"]]
+QCResults_Disc <- protocolData(preQC_discovery)[["QCFlags"]]
+QCResults_Valid <- protocolData(preQC_validation)[["QCFlags"]]
+
+
+```
+
+
+```{r QC Results_All}
+
+flag_columns <- colnames(QCResults_All)
+QC_Summary_All <- data.frame(Pass = colSums(!QCResults_All[, flag_columns], na.rm = TRUE),
+                         Warning = colSums(QCResults_All[, flag_columns], na.rm = TRUE))
+QCResults_All$QCStatus <- apply(QCResults_All, 1L, function(x) {
+    ifelse(sum(x) == 0L, "PASS", "WARNING")
+})
+QC_Summary_All["TOTAL FLAGS", ] <-
+    c(sum(QCResults_All[, "QCStatus"] == "PASS", na.rm = TRUE),
+      sum(QCResults_All[, "QCStatus"] == "WARNING", na.rm = TRUE))
+
+
+```
+
+
+```{r QC Results_Disc}
+
+
+flag_columns <- colnames(QCResults_Disc)
+QC_Summary_Disc <- data.frame(Pass = colSums(!QCResults_Disc[, flag_columns], na.rm = TRUE),
+                         Warning = colSums(QCResults_Disc[, flag_columns], na.rm = TRUE))
+QCResults_Disc$QCStatus <- apply(QCResults_Disc, 1L, function(x) {
+    ifelse(sum(x) == 0L, "PASS", "WARNING")
+})
+QC_Summary_Disc["TOTAL FLAGS", ] <-
+    c(sum(QCResults_Disc[, "QCStatus"] == "PASS", na.rm = TRUE),
+      sum(QCResults_Disc[, "QCStatus"] == "WARNING", na.rm = TRUE))
+
+
+
+```
+
+
+```{r QC Results_Valid}
+
+flag_columns <- colnames(QCResults_Valid)
+QC_Summary_Valid <- data.frame(Pass = colSums(!QCResults_Valid[, flag_columns], na.rm = TRUE),
+                         Warning = colSums(QCResults_Valid[, flag_columns], na.rm = TRUE))
+QCResults_Valid$QCStatus <- apply(QCResults_Valid, 1L, function(x) {
+    ifelse(sum(x) == 0L, "PASS", "WARNING")
+})
+QC_Summary_Valid["TOTAL FLAGS", ] <-
+    c(sum(QCResults_Valid[, "QCStatus"] == "PASS", na.rm = TRUE),
+      sum(QCResults_Valid[, "QCStatus"] == "WARNING", na.rm = TRUE))
+
+
+```
+
+
+### 3.2.1 Visualize Segment QC
+
+Before excluding any low-performing ROI/AOI segments, we visualize the distributions of the data for the different QC parameters. Note that the "Select Segment QC" and "Visualize Segment QC" sections are performed in parallel to fully understand low-performing segments for a given study. Iteration may follow to select the study-specific QC cutoffs.
+
+For QC visualization, we write a quick function to draw histograms of our data.
+
+```{r}
+
+col_by <- "dataset"
+
+# Graphical summaries of QC statistics plot function
+QC_histogram <- function(assay_data = NULL,
+                         annotation = NULL,
+                         fill_by = NULL,
+                         thr = NULL,
+                         scale_trans = NULL) {
+    plt <- ggplot(assay_data,
+                  aes_string(x = paste0("unlist(`", annotation, "`)"),
+                             fill = fill_by)) +
+        geom_histogram(bins = 50) +
+        geom_vline(xintercept = thr, lty = "dashed", color = "black") +
+        theme_bw() + guides(fill = "none") +
+        facet_wrap(as.formula(paste("~", fill_by)), nrow = 4) +
+        labs(x = annotation, y = "Segments, #", title = annotation)+
+        scale_fill_manual(values = c("discovery" = "purple", "validation" = "darkorange"))
+    if(!is.null(scale_trans)) {
+        plt <- plt +
+            scale_x_continuous(trans = scale_trans)
+    }
+    plt
+}
+
+```
+
+
+
+
+Now we explore each of the QC metrics for the segments.
+
+
+
+
+
+```{r fig.height=6, fig.width=10}
+
+QC_plot <- function(preQC_data){
+  Trimmed <- QC_histogram(sData(preQC_data), "Trimmed (%)", col_by, 80 )
+  Stiched <- QC_histogram(sData(preQC_data), "Stitched (%)", col_by, 80)
+  Aligned <- QC_histogram(sData(preQC_data), "Aligned (%)", col_by, 75)
+  Saturated <- QC_histogram(sData(preQC_data), "Saturated (%)", col_by, 50) +
+    labs(title = "Sequencing Saturation (%)",
+         x = "Sequencing Saturation (%)")
+  Area <- QC_histogram(sData(preQC_data), "Area", col_by, 1000, scale_trans = "log10")
+  Nuclei <- QC_histogram(sData(preQC_data), "nuclei", col_by, 20)
+
+  Trimmed + Stiched + Aligned + Saturated + Area + Nuclei
+  
+  
+}
+
+
+```
+
+
+```{r}
+QC_plot(preQC_data = preQC_all)
+QC_plot(preQC_data = preQC_discovery)
+QC_plot(preQC_data = preQC_validation)
+
+```
+
+
+
+
+
+```{r neggeomeans_all}
+# calculate the negative geometric means for each module
+negativeGeoMeans_all <-
+    esBy(negativeControlSubset(preQC_all),
+         GROUP = "Module",
+         FUN = function(x) {
+             assayDataApply(x, MARGIN = 2, FUN = ngeoMean, elt = "exprs")
+         })
+protocolData(preQC_all)[["NegGeoMean"]] <- negativeGeoMeans_all
+
+# explicitly copy the Negative geoMeans from sData to pData
+negCols <- paste0("NegGeoMean_", modules)
+pData(preQC_all)[, negCols] <- sData(preQC_all)[["NegGeoMean"]]
+for(ann in negCols) {
+    plt <- QC_histogram(pData(preQC_all), ann, col_by, 2, scale_trans = "log10")
+    print(plt)
+}
+
+```
+
+
+```{r neggeomeans_discovery}
+# calculate the negative geometric means for each module
+negativeGeoMeans_disc <-
+    esBy(negativeControlSubset(preQC_discovery),
+         GROUP = "Module",
+         FUN = function(x) {
+             assayDataApply(x, MARGIN = 2, FUN = ngeoMean, elt = "exprs")
+         })
+protocolData(preQC_discovery)[["NegGeoMean"]] <- negativeGeoMeans_disc
+
+# explicitly copy the Negative geoMeans from sData to pData
+negCols <- paste0("NegGeoMean_", modules)
+pData(preQC_discovery)[, negCols] <- sData(preQC_discovery)[["NegGeoMean"]]
+for(ann in negCols) {
+    plt <- QC_histogram(pData(preQC_discovery), ann, col_by, 2, scale_trans = "log10")
+    print(plt)
+}
+
+```
+
+
+
+```{r neggeomeans_validation}
+# calculate the negative geometric means for each module
+negativeGeoMeans_val <-
+    esBy(negativeControlSubset(preQC_validation),
+         GROUP = "Module",
+         FUN = function(x) {
+             assayDataApply(x, MARGIN = 2, FUN = ngeoMean, elt = "exprs")
+         })
+protocolData(preQC_validation)[["NegGeoMean"]] <- negativeGeoMeans_val
+
+# explicitly copy the Negative geoMeans from sData to pData
+negCols <- paste0("NegGeoMean_", modules)
+pData(preQC_validation)[, negCols] <- sData(preQC_validation)[["NegGeoMean"]]
+for(ann in negCols) {
+    plt <- QC_histogram(pData(preQC_validation), ann, col_by, 2, scale_trans = "log10")
+    print(plt)
+}
+
+```
+
+
+```{r}
+# detach neg_geomean columns ahead of aggregateCounts call
+pData(preQC_all) <- pData(preQC_all)[, !colnames(pData(preQC_all)) %in% negCols]
+
+# detach neg_geomean columns ahead of aggregateCounts call
+pData(preQC_discovery) <- pData(preQC_discovery)[, !colnames(pData(preQC_discovery)) %in% negCols]
+
+# detach neg_geomean columns ahead of aggregateCounts call
+pData(preQC_validation) <- pData(preQC_validation)[, !colnames(pData(preQC_validation)) %in% negCols]
+
+# show all NTC values, Freq = # of Segments with a given NTC count:
+kable(table(NTC_Count = sData(preQC_all)$NTC),
+      col.names = c("NTC Count ALL", "# of Segments"))
+
+kable(table(NTC_Count = sData(preQC_discovery)$NTC),
+      col.names = c("NTC Count DISC", "# of Segments"))
+
+kable(table(NTC_Count = sData(preQC_validation)$NTC),
+      col.names = c("NTC Count VALID", "# of Segments"))
+
+
+
+
+```
+
+
+
+### 3.2.2 Remove Flagged Segments
+
+As the final step in the QC, we remove all flagged segments that do not meet the QC cutoff.
+
+```{r}
+all_afterQC <- preQC_all[, QCResults_All$QCStatus == "PASS"]
+
+discovery_afterQC <- preQC_discovery[, QCResults_Disc$QCStatus == "PASS"]
+validation_afterQC <- preQC_validation[, QCResults_Valid$QCStatus == "PASS"]
+
+# Subsetting our dataset has removed samples which did not pass QC
+print("all")
+dim(preQC_data)
+dim(all_afterQC)
+print("discovery")
+dim(preQC_discovery)
+dim(discovery_afterQC)
+print("validation")
+dim(preQC_validation)
+dim(validation_afterQC)
+
+
+```
+
+Save the object after QC
+
+```{r}
+
+
+save(all_afterQC, file = "all_data_afterQC.Rdata")
+
+
+```
+
