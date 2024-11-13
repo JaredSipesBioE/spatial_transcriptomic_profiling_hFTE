@@ -17,12 +17,1155 @@ For details, see: geomx_dataset_and_normalization.Rmd
 
 
 
-# Load Packages
+# 1.0 Setup
+
+# 1.1 Load Packages
  
 The following packages are needed for this document. 
 
 
 ```{r}
+# 
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+
+# The following initializes most up to date version of Bioc
+# BiocManager::install(version="3.15")
+# 
+# BiocManager::install("NanoStringNCTools")
+# BiocManager::install("GeomxTools")
+# BiocManager::install("GeoMxWorkflows")
+
+# Note:
+# Needed to install package lme4, numderiv
+library(NanoStringNCTools)
+library(GeomxTools)
+library(GeoMxWorkflows)
+
+if(packageVersion("GeomxTools") < "2.1" & 
+   packageVersion("GeoMxWorkflows") >= "1.0.1"){
+    stop("GeomxTools and Workflow versions do not match. Please use the same version. 
+    This workflow is meant to be used with most current version of packages. 
+    If you are using an older version of Bioconductor please reinstall GeoMxWorkflows and use vignette(GeoMxWorkflows) instead")
+}
+
+if(packageVersion("GeomxTools") > "2.1" & 
+   packageVersion("GeoMxWorkflows") <= "1.0.1"){
+    stop("GeomxTools and Workflow versions do not match. 
+         Please use the same version, see install instructions above.")
+    
+    # to remove current package version
+        # remove.packages("GeomxTools")
+        # remove.packages("GeoMxWorkflows")
+    # see install instructions above 
+}
+```
+
+```{r}
+# for file names
+library(here)
+
+# read in xl files 
+library(readxl)
+
+
+# Need for UMAP, tSNE plots
+library(umap)
+library(Rtsne)
+
+# Needed for the heatmap plotting
+library(ComplexHeatmap) 
+
+#Needed for volcano plotting functions
+
+library(ggrepel)
+library(ggplot2)
+library(latex2exp)
+library(plyr)
+library(dplyr)
+
+
+# Read in images and convert to ggplot object
+
+library(magick)
+
+
+# used for some color palettes  
+library(RColorBrewer)
+library(stringi)
+
+
+# For significance
+library(ggpubr)
+
+
+# For Stitching multiple plots together
+library(patchwork)
+library(cowplot)
+library(grid)
 
 ```
+
+
+
+
+
+# 1.2 Load the Dataset and all Analyses Used
+
+```{r}
+
+# make sure to use correct "here" function.
+
+load(here::here("all_q_norm.Rdata"))
+
+load(here::here("disc_q_norm.Rdata"))
+
+load(here::here("valid_q_norm.Rdata"))
+
+
+dim(all_q_norm)
+
+dim(disc_q_norm)
+
+dim(valid_q_norm)
+
+```
+
+Refactor the GeoMx objectes to use simplified region names. 
+
+```{r}
+
+factor_region <- function(GeoMxObj = all_q_norm){
+  pData(GeoMxObj)$region <- factor(pData(GeoMxObj)$region, levels = c("Fimbria", "Infundibulum", "Ampulla", "Isthmus"))
+  
+  pData(GeoMxObj)$region <- revalue(pData(GeoMxObj)$region, c("Fimbria"="Fim", "Infundibulum"="Inf", "Ampulla" = "Amp", "Isthmus" = "Isth"))
+  
+  return(GeoMxObj)
+}
+
+
+all_q_norm <- all_q_norm |> factor_region()
+
+disc_q_norm <- disc_q_norm |> factor_region()
+
+valid_q_norm <- valid_q_norm |> factor_region()
+
+```
+
+
+
+
+Subset the "all" dataset into discovery and validation datasets.
+
+The major difference between these datasets and the "disc_q_norm" and "valid_q_norm" is that the latter were normalizzed separately. In contrast, all_disc and all_valid were normalized together and comparisons of gene expression between the two datasets are valid. 
+
+```{r}
+all_disc <- all_q_norm[, pData(all_q_norm)$Patient %in% c("P1", "P2", "P3")]
+
+`%ni%` <- Negate(`%in%`)
+
+all_valid <- all_q_norm[, pData(all_q_norm)$Patient %ni% c("P1", "P2", "P3")]
+
+
+```
+
+
+
+
+
+
+
+# 2. Figure 1
+
+Figure 1A-F are images and are not found in this document. 
+
+Figure 1G was generated in the GeoMx Normalization document.
+
+
+## 2.2 Figure 1H 
+
+### FUNCT: cil_v_sec_boxplot_points()
+
+The following function is used to create boxplots comparing the expression of PAX8 and FOXJ1 in ciliated and secretory segments. The purpose is to validate segment separation worked correctly. 
+
+
+```{r}
+
+cil_v_sec_boxplot_points <- function(gene = "FOXJ1", point_size = 3, dataset = all_q_norm){
+    set.seed(42)
+    vector <- as.vector(assayDataElement(dataset[gene, ], elt = "q_norm"))
+    plot <- ggplot(pData(dataset),
+      aes(x = segment,
+          y = vector,
+          fill = segment
+          )
+      )+
+      geom_boxplot(outlier.shape = NA)+
+      labs(title = TeX(paste0("\\textit{", gene, "}")),
+           y = TeX(paste0("\\textit{", gene, "} Expression")),
+           x = "Cell Type")+
+
+      geom_jitter(size = point_size, width = 0.25, stroke = 0.3)+
+      scale_fill_manual(values =c("green", "red"))+
+
+
+      theme_bw()+
+    
+    stat_compare_means(
+      comparisons = list(c("Ciliated", "Secretory")),
+      method = "t.test", 
+      bracket.nudge.y = -0.5,
+      size = point_size+5)+
+      
+      scale_y_continuous(expand = expansion(mult = c(0.05, 0.10)))
+    
+    
+  return(plot)
+
+}
+
+```
+
+
+
+
+```{r  fig.height=6, fig.width=15}
+
+
+text_size <- 25
+
+# For Discovery Dataset
+
+FOXJ1_d <- cil_v_sec_boxplot_points(gene = "FOXJ1", dataset = disc_q_norm) + theme(text=element_text(size=text_size)) + theme(legend.position = "none")
+
+PAX8_d <- cil_v_sec_boxplot_points(gene = "PAX8", dataset = disc_q_norm) + theme(text=element_text(size=text_size)) + theme(legend.position = "none")
+
+
+# For Validation Dataset
+
+FOXJ1_v <- cil_v_sec_boxplot_points(gene = "FOXJ1", dataset = valid_q_norm) + theme(text=element_text(size=text_size)) + theme(legend.position = "none")
+
+PAX8_v <- cil_v_sec_boxplot_points(gene = "PAX8", dataset = valid_q_norm) + theme(text=element_text(size=text_size)) + theme(legend.position = "none")
+
+
+
+title1 <- grid::textGrob(label = "Discovery", gp=gpar(fontsize=35))
+title2 <- grid::textGrob(label = "Validation", gp=gpar(fontsize=35))
+
+# Patchwork is used to combine plots
+
+combine_1 =  (wrap_elements(panel = title1) / (FOXJ1_d + PAX8_d)) + plot_layout(heights = c(1.5, 10))
+combine_2 =  (wrap_elements(panel = title2) / (FOXJ1_v + PAX8_v)) + plot_layout(heights = c(1.5, 10))
+
+
+wrap_elements(combine_1)|wrap_elements(combine_2)
+```
+
+
+
+
+
+
+# 3. Figure 2
+
+ Volcano plots for figure 2 generated separately. 
+
+
+# 4. Figure 3 
+
+
+
+## 4.1 Figure 3A
+
+
+Figure 3A is an image generated using BioRender. It is read in below and converted to a ggplot object. 
+
+
+```{r}
+
+# image_ggplot is from the package "magick"
+
+picture_3A <- image_read(paste0(getwd(), "/pictures/fig3a.jpeg")) |>
+  image_ggplot()
+
+```
+
+
+
+## 4.2 Figure 3B-C (Volcano plots with mature ciliated cell markers)
+
+
+
+#### Markers of Mature Ciliated Cells 
+
+
+The following markers of mature ciliated cells are identified using single cell sequencing by Ulrich et al. 
+
+Cellular heterogeneity of human fallopian tubes in normal and hydrosalpinx disease states identified using scRNA-seq
+
+DOI: 10.1016/j.devcel.2022.02.017
+
+
+```{r}
+
+mature_cil <- c(
+  "CAPS", "CETN2", "PIFO", "C1orf194", "C9orf24", "SNTN", "AGR3", "C20orf85", "MORN2", "PERP", "HMGN3", "TMEM59", "RSPH1",
+  "CALM1", "AGR2", "METRN", "DYNLL1", "CD24", "TXN", "PRDX5", "C9orf116", "IK", "MORN5", "FAM183A", "CFAP126", "CAPSL",
+  "IGFBP7", "C11orf88", "SPA17", "ODF3B", "CCDC146", "DYNLRB2", "FAM92B", "C9orf135", "PSENEN", "C5orf49", "FAM81B", "ARHGAP18", "PPIL6",
+  "SLC44A4", "RBP1", "ANKRD66", "CYSTM1", "MLF1", "CFAP52", "WDR54", "LRRC23", "CTSS", "TAX1BP1", "TPPP3", "GON7", "FAM174A",
+  "C6", "TSPAN3", "CIB1", "EFCAB1", "IFT57", "CCDC170", "DYDC2", "ARMC3", "NME5", "ENKUR", "MNS1", "TCTN1", "SMIM22",
+  "C11orf97", "WDR78", "MS4A8", "TSPAN6", "FAM216B", "RIIAD1", "FOXJ1", "ARL3", "DRC1", "CTXN1", "ROPN1L", "NUCB2", "EZR",
+  "GSTA3", "C4orf48", "MT-ND3", "NELL2", "CCDC113", "SPAG6", "AC013264.1", "GET1", "FXYD3", "TFF3", "EFCAB10", "STK33", "SPATA17",
+  "FAIM", "CABCOCO1", "CKB", "TTC29", "KIF21A", "SCGB2A1", "AL357093.2", "STOML3", "CFAP53", "WDR86-AS1", "DNAH9", "C20orf96", "TUBA1A",
+  "LDLRAD1", "SAMHD1", "SOD3", "DNAH5", "CCDC173", "ERICH3", "CTSD", "MT-ND5", "TSPAN1", "PLTP", "AK1", "FOLR1", "RHOB",
+  "FABP6", "CST6", "PDK4", "ANXA13", "RHOU", "IRX3", "C12orf75", "NEDD9", "MOSPD1", "TMEM190", "CRIP1", "MT-ND4L", "GOLM1",
+  "ASRGL1", "SCGB1D4", "GSTA1", "PGR", "G0S2", "FGA", "RRAD"
+)
+
+
+```
+
+
+
+### Load files required for volcano plots
+
+
+Note: This still uses the old stat analysis that includes Patient 6 - will have to be modified later! 
+
+
+
+```{r}
+
+
+stat_files <- paste0(getwd(), "/stat_analysis")
+
+stat_files_all <- paste0(stat_files, "/ALL")
+stat_files_disc <- paste0(stat_files, "/Discovery")
+stat_files_valid <- paste0(stat_files, "/Validation")
+
+#secretory cells
+pairwise_s_disc <- paste0(stat_files_disc, "/0.10_SECRETORY_Pairwise_region_comparison.xlsx")
+pairwise_s_valid <- paste0(stat_files_valid, "/Validation_SECRETORY_Pairwise_region_comparison.xlsx")
+pairwise_s_all <- paste0(stat_files_all, "/ALL_SECRETORY_Pairwise_region_comparison.xlsx")
+# ciliated cells 
+pairwise_c_disc <- paste0(stat_files_disc, "/0.10_CILIATED_Pairwise_region_comparison.xlsx")
+pairwise_c_valid <- paste0(stat_files_valid, "/Validation_CILIATED_Pairwise_region_comparison.xlsx")
+pairwise_c_all <- paste0(stat_files_all, "/ALL_CILIATED_Pairwise_region_comparison.xlsx")
+
+# create a nested list structure to store all of the dataframes in one object
+
+pairwise_comparisons <- list()
+
+```
+
+
+
+
+#### FUNCT: get_all_comparisons
+
+
+```{r}
+
+comparison_pairwise <- c("Fimbria.vs.Infundibulum", "Fimbria.vs.Ampulla", "Fimbria.vs.Isthmus", 
+                     "Infundibulum.vs.Ampulla", "Infundibulum.vs.Isthmus", "Ampulla.vs.Isthmus")
+
+pairwise_names <- c("fim_v_inf", "fim_v_amp", "fim_v_isth", "inf_v_amp", "inf_v_isth", "amp_v_isth")
+
+get_all_comparions <- function(path = pairwise_s_disc, comparison_list = comparison_pairwise, comparison_name = pairwise_names){
+  data_list <- lapply(comparison_list, read_xlsx, path = path)
+  names(data_list) <- comparison_name
+  
+  return(data_list)
+}
+
+
+```
+
+
+Create list of pairwise comparisons
+
+```{r}
+
+pairwise_comparisons[["disc"]][["sec"]] <- get_all_comparions(path = pairwise_s_disc)
+pairwise_comparisons[["valid"]][["sec"]] <- get_all_comparions(path = pairwise_s_valid)
+pairwise_comparisons[["all"]][["sec"]] <- get_all_comparions(path = pairwise_s_all)
+
+pairwise_comparisons[["disc"]][["cil"]] <- get_all_comparions(path = pairwise_c_disc)
+pairwise_comparisons[["valid"]][["cil"]] <- get_all_comparions(path = pairwise_c_valid)
+pairwise_comparisons[["all"]][["cil"]] <- get_all_comparions(path = pairwise_c_all)
+
+```
+
+
+
+
+### Functions for creating volcano plots Fig 3
+
+
+
+#### FUNCT: volcano_plot
+
+This function takes a data frame containing log_fold, p_value, and minuslog10_Pvalue columns and plots a volcano plot.
+
+Optionally, you can label selected genes in purple by providing the plot with a list of genes names in `highlight_genes`.
+
+Change `flip_log_fold` to `TRUE` to flip which side of the volcano plot is upregulated. 
+
+To label genes, use the function add_labels below. 
+
+```{r}
+volcano_plot <- function(
+    df = NULL,
+    highlight_genes = c(), #empty list
+    title_name = NULL,
+    title_size = 8,
+    upreg = NULL,
+    downreg = NULL,
+    xmin = -4,
+    xmax = 4,
+    lab_size = 3,
+    FC_cutoff = 0.5,
+    flip_log_fold = F
+){
+  if(is.null(upreg) & is.null(downreg)){
+    FC_name = TeX("$log_2(FC)$")
+  }
+  else{
+    FC_name = TeX(paste0("$log_2(\\frac{\\mu_{", upreg, "}}{\\mu_{", downreg, "}})$"))
+  }
+  if(is.null(title_name)){
+    title_name = deparse(substitute(df))
+  }
+  if(flip_log_fold){
+    df$log_fold <- -df$log_fold
+  }
+  df$color <- "NS or FC < 0.5"
+
+  df$color[df$log_fold > FC_cutoff & df$p_value < 0.05] <- "Upregulated"
+  df$color[df$log_fold < -FC_cutoff & df$p_value < 0.05] <- "Downregulated"
+  df$color[df$Marker.name %in% highlight_genes] <- "Markers of Mature Ciliated Cells"
+  df$color <- factor(df$color,
+                        levels = c("NS or FC < 0.5", "Upregulated", "Downregulated", "Markers of Mature Ciliated Cells"))
+  
+  genes_to_label <- filter(df, df$color != "NS or FC < 0.5")
+  
+
+  ggplot(df, aes(x = log_fold, y = minuslog10_Pvalue))+
+    geom_point(aes(color = color)) +
+    labs(title = title_name, x = FC_name, y = TeX("$-log_{10}(p_{value})$"))+
+    xlim(xmin, xmax)+
+
+    # coord_cartesian(ylim= c(0, 10))+
+
+    scale_color_manual(values = c(`Downregulated` = "blue",
+                                  `Upregulated` = "red",
+                                  `NS or FC < 0.5` = "gray",
+                                  `Markers of Mature Ciliated Cells` = "forestgreen"),
+                       guide = guide_legend(override.aes = list(size = 6)))+
+
+    geom_vline(xintercept = 0.5, linetype = "dashed", color = "blue")+
+    geom_vline(xintercept = -0.5, linetype = "dashed", color = "blue")+
+
+    # add lines at p-value cut-offs
+    geom_hline(yintercept = 1.3, linetype = "dashed", color = "red")+
+    
+
+    
+    # highlight desired genes
+    # must be called after the original geom_point to ensure highlighted genes are visible
+    geom_point(data = df[df$Marker.name %in% highlight_genes, ],
+               aes(x = log_fold, y = minuslog10_Pvalue),
+               color = "forestgreen"
+               )+
+
+
+    theme_light(base_size = 24, base_family = "sans")+
+
+    # remove dumb grid-lines
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())+
+    labs(color = "Color")+
+      
+    theme(plot.title = element_text(size = title_size))
+}
+
+```
+
+
+#### FUNCT: add_labels
+
+
+labels genes in the volcano plots.
+
+```{r}
+add_labels <- function(plot = NA, df = NA, n_genes = 10, method = "manh", highlight_genes = c(), lab_size = 3, flip_log_fold = F){
+    if(flip_log_fold){
+      df$log_fold <- -df$log_fold
+      }
+    
+  
+    # find the top n genes using the selected method
+    # return names
+    top_n <- top_genes(df = df, sort_method = method, n_genes = n_genes)$Marker.name
+    
+    # merge the name list, removing duplicate values
+    gene_list <- unique(c(top_n, highlight_genes))
+    
+    # filter dataset to get only genes to label
+  
+    genes_to_label <- filter(df, df$Marker.name %in% gene_list)
+  
+    plot_out <- plot +
+
+    # Now add labels to both the up and down regulated genes
+      
+    # for log_fold > 0, plot between 05 and 3
+
+    geom_label_repel(data = subset(genes_to_label, log_fold > 0),
+                     aes(label = Marker.name,
+                         x = log_fold,
+                         y = minuslog10_Pvalue),
+                     xlim = c(0.5, 3),
+                     # xlim = c(1, NA)
+                    # # nudge_x = c(0.5, -0.5),
+                    # nudge_y = c(0.2, -0.2),
+                    # box.padding = unit(0.5, "lines"),
+                    # point.padding = unit(.3+3*0.1, "lines"),
+                    # max.time = 100,
+                    # max.iter = 10^6,
+                    size = lab_size,
+                    max.overlaps = 40
+                    )+
+      
+      # for log_fold < 0, plot -0.5 to -3
+      geom_label_repel(data = subset(genes_to_label, log_fold < 0),
+                     aes(label = Marker.name,
+                         x = log_fold,
+                         y = minuslog10_Pvalue),
+                     xlim = c(-3, -0.5),
+                     # xlim = c(1, NA)
+                    # nudge_x = c(0.5, -0.5),
+                    # nudge_y = c(0.2, -0.2),
+                    # box.padding = unit(0.5, "lines"),
+                    # point.padding = unit(.3+3*0.1, "lines"),
+                    # max.time = 100,
+                    # max.iter = 10^6,
+                    size = lab_size,
+                    max.overlaps = 20
+                    )
+
+    
+    return(plot_out)
+  
+    }
+
+
+```
+
+
+
+#### FUNCT: top_genes
+
+Identifies top genes for the volcano plot according to the selected method. 
+
+
+```{r}
+top_genes <- function(df = NA, sort_method = "manh", n_genes = 10, use_cutoff = T, log_fold_cutoff = 0.5, p_value_cutoff = 0.05){
+  
+  # remove all rows that do not meet the threshold requirement
+  if(use_cutoff){
+    df <- df[abs(df$log_fold) >= log_fold_cutoff, ]
+    df <- df[df$p_value <= p_value_cutoff, ]
+  }
+  
+  if(sort_method == "manh"){
+  # Make a new column called man with the manhattan distance
+  df <- df |> mutate(man = abs(log_fold) + abs(minuslog10_Pvalue)) |> arrange(desc(man))}
+  else if(sort_method == "euc"){
+  # Make a new column called man with the Euclidian distance
+  df <- df |> mutate(euc = sqrt(log_fold^2 + minuslog10_Pvalue^2)) |> arrange(desc(euc))
+  }
+  else if (sort_method == "fc"){
+    df <- df |> arrange(desc(abs(log_fold)))
+  }
+  else if(sort_method == "sig"){
+    df <- df |> arrange(desc(minuslog10_Pvalue))
+  }
+  else{
+    message("Not a valid sort method. Select `mnh`, `euc`, `fc`, or `sig`.")
+  }
+  
+  df_out <- head(df, n = n_genes)
+  
+  return(df_out)
+}
+```
+
+
+
+### FUNCT: remove_legend()
+
+This function removes unwanted legends from a ggplot object.
+
+```{r}
+
+remove_legend <- function(plot){
+  plot + theme(legend.position = "none")
+}
+```
+
+
+
+
+
+
+
+
+### Volc_plot Fimbria v Isthmus Comparisons
+
+
+```{r}
+title = 20
+
+df1 <- pairwise_comparisons$disc$cil
+
+df2 <- pairwise_comparisons$valid$cil
+
+fim_v_isth_disc <- volcano_plot(df = df1$fim_v_isth, 
+                 title_name = "Fimbria v Isthmus, Ciliated Cells, Discovery", title_size = title, upreg = "Fimbria", downreg = "Isthmus",
+                 highlight_genes = mature_cil
+                 ) |> add_labels(df = df1$fim_v_isth, lab_size = 5, highlight_genes = mature_cil, n_genes =0) |> remove_legend()
+
+
+fim_v_isth_valid <- volcano_plot(df = df2$fim_v_isth, 
+                 title_name = "Fimbria v Isthmus, Ciliated Cells, Validation", 
+                 title_size = title, upreg = "Fimbria", downreg = "Isthmus",
+                 highlight_genes = mature_cil
+                 ) |> add_labels(df = df2$fim_v_isth, lab_size = 5, highlight_genes = mature_cil, n_genes =0) |> remove_legend()
+
+
+
+# volcano_plot(df = df2$fim_v_isth, 
+#                  title_name = "Fimbria v Isthmus, Ciliated Cells, Validation", 
+#                  title_size = title, upreg = "Fimbria", downreg = "Isthmus",
+#                  highlight_genes = mature_cil
+#                  )
+
+
+```
+
+
+
+
+
+## 4.3 Create Ratio Comparisons
+
+The following functions create ratio comparison plots for figure 3D-E (discovery) and 3J-K (validation).
+
+
+### FUNCT: make_ratio()
+
+```{r}
+
+
+
+# Ascending Secretory approaching Isthmus
+
+
+
+make_ratio <- function(gene1 = "PAX8", gene2 = "FOXJ1", dataset = all_q_norm, title = "All", point_size = 3, selected_segment = NA, make_legend = F){
+  
+    dataset_original <- dataset
+    
+    
+    # Filter dataset for the selected segment if provided
+    if (!is.na(selected_segment)) {
+        dataset <- dataset[, pData(dataset)$segment == selected_segment]
+    }
+  
+    # Compute gene1/gene2 ratio and convert to vector
+
+    vector <- as.vector(assayDataElement(dataset[gene1, ], elt = "q_norm")/ 
+                          assayDataElement(dataset[gene2, ], elt = "q_norm"))
+    
+    # Create the ggplot
+    plot <- ggplot(
+      pData(dataset), 
+      aes(x = region,
+          y = vector,
+          fill = region
+          )
+      )+
+      geom_boxplot(outlier.shape = NA) +
+      labs(title = TeX(paste0("\\textit{", gene1, "/", gene2, "}")), 
+           y = TeX(paste0("\\textit{", gene1, "/", gene2, "}")),
+           x = "Anatomical Region")+
+      facet_wrap(~segment)+
+  
+      geom_jitter(size = point_size, width = 0.25, stroke = 1.3, aes(shape = Patient))+
+  
+      scale_shape_manual(values = c(3, 4, 13, 21, 22, 23, 24))+
+  
+      theme_bw()+
+  
+      # scale_x_discrete(labels=c("Fim","Inf","Amp", "Isth"))+
+      scale_fill_manual(values= c("#7CAE00", "#00C1C6", "#F8766D", "#C77CFF"))+
+  
+      theme(axis.text.x = element_text(size = 15),
+            axis.text.y = element_text(size = 12),
+            axis.title.y = element_text(size = 15),
+            axis.title.x = element_text(size = 15),
+            legend.text = element_text(size =12),
+            legend.title = element_text(size = 12),
+            strip.text = element_text(size = 15))
+
+
+  # Generate legend and adjust plot sizes
+  legend <- make_boxplot_legend(dataset = dataset_original)
+  
+  ratio_resize <- adj_text_size(plot, pnt = 17)
+  ratio_remove_legend <- remove_legend(ratio_resize)
+  ratio_sig <- add_sig(ratio_remove_legend, pnt = 4)
+
+  # Combine the main plot and legend
+  
+  if(make_legend){
+  plot_final <- (ratio_sig) / legend + plot_layout(heights = c(5, 1))
+  
+  return(plot_final)
+  }
+  plot_final <- ratio_sig
+  
+  return(plot_final)
+  
+}
+
+```
+
+
+### Create Ratio Comparisons
+
+```{r Ratio Comparison, fig.height=5, fig.width=10}
+
+
+# make_ratio(dataset = all_q_norm, title = "All")
+
+
+# PAX8 / FOXJ1 plots
+
+PvF_disc <- make_ratio(gene1 = "PAX8", gene2 = "FOXJ1", dataset = disc_q_norm, selected_segment = "Secretory") 
+
+
+PvF_valid <- make_ratio(gene1 = "PAX8", gene2 = "FOXJ1", dataset = valid_q_norm, selected_segment = "Secretory") 
+
+
+# FOXJ1/PAX8 plots
+
+
+FvP_disc <- make_ratio(gene1 = "FOXJ1", gene2 = "PAX8", dataset = disc_q_norm, selected_segment = "Ciliated") 
+
+
+FvP_valid <- make_ratio(gene1 = "FOXJ1", gene2 = "PAX8", dataset = valid_q_norm, selected_segment = "Ciliated") 
+
+
+
+
+```
+
+
+
+## 4.4 Create Boxplot comparisons
+
+The following sections create the other boxplots for figure 3.
+
+Discovery boxplots Fig3F-I
+and 
+Validation boxplots Fig3L-O
+
+### FUNCT: Cil_v_Sec_Anat_Boxplot_Points
+
+
+This function creates boxplots for a selected gene, comparing the expression in each region and segment. 
+
+```{r}
+
+Cil_v_Sec_Anat_Boxplot_Points <- function(gene = "FOXJ1", point_size = 3, dataset = all_q_norm){
+  
+  # %in% checks to see if a name is in a list. 
+  # I define not in (%ni%) to do the opposite (check if NOT in the list)
+  `%ni%` <- Negate(`%in%`)
+  gene_not_found <- c()
+  if(gene %ni% rownames(assayDataElement(dataset, elt = "q_norm"))){
+    return(paste0(gene, " not in list"))
+  }
+    vector <- as.vector(assayDataElement(dataset[gene, ], elt = "q_norm"))
+    plot <- ggplot(
+      pData(dataset), 
+      aes(x = region,
+          y = vector,
+          fill = region
+          )
+      )+
+      geom_boxplot(outlier.shape = NA) +
+      labs(title = TeX(paste0("\\textit{", gene, "} Expression")), 
+           y = TeX(paste0("\\textit{", gene, "} Expression")),
+           x = "Anatomical Region")+
+      facet_wrap(~segment)+
+  
+      geom_jitter(size = point_size, width = 0.25, stroke = 1.3, aes(shape = Patient))+
+  
+      scale_shape_manual(values = c(3, 4, 13, 21, 22, 23, 24))+
+  
+      theme_bw()+
+  
+      # scale_x_discrete(labels=c("Fim","Inf","Amp", "Isth"))+
+      scale_fill_manual(values= c("#7CAE00", "#00C1C6", "#F8766D", "#C77CFF"))+
+  
+      theme(axis.text.x = element_text(size = 15),
+            axis.text.y = element_text(size = 12),
+            axis.title.y = element_text(size = 15),
+            axis.title.x = element_text(size = 15),
+            legend.text = element_text(size =12),
+            legend.title = element_text(size = 12),
+            strip.text = element_text(size = 15))
+
+
+    return(plot)
+}
+
+```
+
+
+
+
+### FUNCT: adj_text_size()
+
+This function adjusts alll of the text sizes for a ggplot graph. 
+
+```{r}
+adj_text_size <- function(plot, pnt = 20){
+  plot <- plot + theme(
+    text = element_text(size = pnt),
+    axis.text.x = element_text(size = pnt),
+    axis.text.y = element_text(size = pnt),
+    axis.title.y = element_text(size = pnt),
+    axis.title.x = element_text(size = pnt),
+    legend.text = element_text(size = pnt),
+    legend.title = element_text(size = pnt),
+    strip.text = element_text(size = pnt)
+    )
+  
+  return(plot)
+}
+
+
+```
+
+
+
+
+### FUNCT: add_sig
+
+This function adds significance comparisons to boxplots according to the selected comparisons. 
+
+```{r}
+
+my_comparisons = list(
+    c("Amp", "Isth"),
+    c("Inf", "Amp"),
+    c("Fim", "Inf"), 
+    c("Fim", "Amp"),
+    c("Fim", "Isth")
+    )
+
+
+add_sig <- function(plot, comparisons_wanted = my_comparisons, pnt = 5){
+  plot <- plot + 
+    stat_compare_means(
+      comparisons = comparisons_wanted, 
+      method = "t.test", 
+      bracket.nudge.y = -3,
+      size = pnt)+
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.10)))
+  return (plot)
+}
+
+
+# add_sig_pwc <- function(plot, pnt = 5){
+#   plot <- plot + geom_pwc(aes(group = region), method = "t_test", size = pnt)+
+#   scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))
+#   return(plot)
+# }
+```
+
+
+
+### FUNCT: get_legend replacement function
+
+Get legend from the cowplot function broke with the latest ggplot update. Here is a temporary fix from 
+
+https://github.com/wilkelab/cowplot/issues/202. 
+
+Which may eventually be fixed. Until then, I will try this function. 
+
+```{r}
+
+get_legend <- function(plot, legend = NULL) {
+  
+  gt <- ggplotGrob(plot)
+  
+  pattern <- "guide-box"
+  if (!is.null(legend)) {
+    pattern <- paste0(pattern, "-", legend)
+  }
+  
+  indices <- grep(pattern, gt$layout$name)
+
+  not_empty <- !vapply(
+    gt$grobs[indices], 
+    inherits, what = "zeroGrob", 
+    FUN.VALUE = logical(1)
+  )
+  indices <- indices[not_empty]
+  
+  if (length(indices) > 0) {
+    return(gt$grobs[[indices[1]]])
+  }
+  return(NULL)
+}
+
+
+```
+
+
+
+
+
+### FUNCT: make_boxplot_legend()
+
+
+This uses the make_legend function to make the legend for boxplots. 
+
+
+```{r}
+
+
+make_boxplot_legend <- function(dataset = NA, width = 0.5){
+  
+  plot <- Cil_v_Sec_Anat_Boxplot_Points("ESR1", dataset = dataset)+
+      guides(color = guide_legend(nrow = 1)) +
+      theme(legend.position = "bottom") +
+      theme(
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.spacing = unit(20, "pt")
+        )
+  
+  
+       # guides(shape = guide_legend(override.aes = list(size = 6)))+
+       # theme(legend.key.height= unit(0.8, 'cm'),
+       #    legend.key.width= unit(width, 'cm'))
+  
+  legend <- get_legend(plot)
+  
+  return(legend)
+  
+}
+
+
+```
+### FUNCT: make_fig3()
+
+This create boxplots formatted specifically for figure 3
+
+
+```{r}
+
+# List of Genes up in Mature Ciliated Cells 
+
+Fig3 <- c("MLF1", "SPA17", "CTSS", "C6")
+
+
+# Function to create boxplots for Figure 3
+
+make_fig3 <- function(genes = Fig3, dataset = all_q_norm, title = "All"){
+
+  graphs_up_Fig3 <- lapply(X = genes, FUN = Cil_v_Sec_Anat_Boxplot_Points, dataset = dataset)
+  
+  
+  
+  Fig3_resize <- lapply(graphs_up_Fig3, adj_text_size, pnt = 17)
+  Fig3_remove_legend <- lapply(Fig3_resize, remove_legend)
+  Fig3_sig <- lapply(Fig3_remove_legend, add_sig, pnt = 4)
+
+
+
+  return(Fig3_sig)
+  
+  }
+
+
+```
+
+
+
+
+
+### Generate Boxplots
+
+```{r}
+
+F3_disc <- make_fig3(genes = Fig3, dataset = disc_q_norm)
+
+F3_valid <- make_fig3(genes = Fig3, dataset = valid_q_norm)
+
+legend_disc <- make_boxplot_legend(dataset = disc_q_norm)
+
+legend_valid <- make_boxplot_legend(dataset = valid_q_norm)
+
+```
+
+
+
+## 4.4 Generate Final Image
+
+
+```{r fig.height=20, fig.width=25}
+library(patchwork)
+
+
+
+# Generate Labels for adding to the graphs
+
+top <- grid::grobTree(rectGrob(gp=gpar(fill='#F0F0F0',col= 'black')), textGrob('Discovery Dataset', gp=gpar(fontsize=25))) 
+
+bottom <- grid::grobTree(rectGrob(gp=gpar(fill='#F0F0F0',col= 'black')), textGrob('Validation Dataset', gp=gpar(fontsize=25))) 
+
+
+
+# Use patchwork to combine the final image into one complete image
+
+wrap_elements(free(picture_3A) | fim_v_isth_disc | fim_v_isth_valid) / 
+  wrap_elements(top) /
+
+ (((FvP_disc| PvF_disc ) | F3_disc[[1]] | F3_disc[[2]] |  F3_disc[[3]] | F3_disc[[4]]) +
+    plot_layout(widths = c(1, 1, 2, 2, 2, 2)))/
+
+ legend_disc /
+
+ wrap_elements(bottom) /
+
+ (((FvP_valid| PvF_valid) | F3_valid[[1]] | F3_valid[[2]] | F3_valid[[3]] |F3_valid[[4]]) +
+    plot_layout(widths = c(1, 1, 2, 2, 2, 2)))/
+
+ legend_valid +
+
+ plot_layout(heights = c(5, 0.5, 4, 0.5, 0.5, 4, 0.5))
+
+
+
+```
+
+
+
+
+## 5. Figure 4: Adhesion, ROS and Apoptosis Related
+
+
+
+### FUNCT: make_fig4()
+
+This create boxplots formatted for figure 4. 
+
+
+```{r}
+
+# This function makes all of the boxplots for figure 4 according to the same specifications
+
+make_fig4 <- function(genes = Fig4_gene_list, dataset = all_q_norm, title = "All"){
+
+  graphs_up_Fig <- lapply(X = genes, FUN = Cil_v_Sec_Anat_Boxplot_Points, dataset = dataset)
+  
+  Fig_resize <- lapply(graphs_up_Fig, adj_text_size, pnt = 17)
+  Fig_remove_legend <- lapply(Fig_resize, remove_legend)
+  Fig_sig <- lapply(Fig_remove_legend, add_sig, pnt = 4)
+
+  return(Fig_sig)
+  
+  }
+```
+
+
+### Create fig4 boxplots
+
+```{r Make all Gene Comparisons, fig.height=22, fig.width=20}
+
+# List of 12 genes to be included in the Figure 4 Boxplots
+
+Fig4_gene_list <- c("ESR1", "PGR", "AR", "FOXA2", "CDH1", "CDH3", "CD99", "LGALS3", "PRDX5", "TXNIP", "GAS1", "BAD", "FOXA1", "FOXA2", "PBX1", "ANXA1", "WT1", "BIRC3", "TNFSF10")
+
+  
+
+# Create all of the Boxplots for the Discovery Dataset
+
+F4_disc <- make_fig4(genes = Fig4_gene_list , dataset = disc_q_norm)
+names(F4_disc) <- Fig4_gene_list
+
+# Create all of the Boxplots for the Validation Dataset
+
+F4_valid <- make_fig4(genes = Fig4_gene_list , dataset = valid_q_norm)
+names(F4_valid) <- Fig4_gene_list
+
+
+# Create Grobs for use as labels
+
+top_1 <-   grobTree(rectGrob(gp=gpar(fill='#F0F0F0',col= 'black')), textGrob('Discovery Dataset: Cell-Cell Adhesion Transcripts', gp=gpar(fontsize=25)))
+
+bottom_1 <- grobTree(rectGrob(gp=gpar(fill='#F0F0F0',col= 'black')), textGrob('Validation Dataset: Cell-Cell Adhesion Transcripts', gp=gpar(fontsize=25)))
+
+
+top_2 <-   grobTree(rectGrob(gp=gpar(fill='#F0F0F0',col= 'black')), textGrob('Discovery Dataset: ROS and Apoptosis Related Transcripts', gp=gpar(fontsize=25)))
+
+bottom_2 <- grobTree(rectGrob(gp=gpar(fill='#F0F0F0',col= 'black')), textGrob('Validation Dataset: ROS and Apoptosis Related Transcripts', gp=gpar(fontsize=25)))
+
+
+  # Part 1 - Cell Cell Adhesion
+  wrap_elements(top_1) / 
+  (F4_disc$CDH1 | F4_disc$CDH3 |  F4_disc$CD99 | F4_disc$LGALS3) /
+  legend_disc /
+  wrap_elements(bottom_1) / 
+  (F4_valid$CDH1 | F4_valid$CDH3 |  F4_valid$CD99 | F4_valid$LGALS3) /
+  legend_valid /
+  # Part 2 - ROS and Apoptosis related  
+  wrap_elements(top_2) / 
+  (F4_disc$PRDX5 | F4_disc$TXNIP |  F4_disc$BAD | F4_disc$GAS1) /
+  legend_disc /
+  wrap_elements(bottom_2) / 
+  (F4_valid$PRDX5 | F4_valid$TXNIP |  F4_valid$BAD | F4_valid$GAS1) /
+  legend_valid +
+    
+    plot_layout(heights = c(0.5, 4, 0.5, 0.5, 4, 0.5, 0.5, 4, 0.5, 0.5, 4, 0.5))  
+    
+    # plot_annotation(tag_levels = list(c("", "a", "b", "c", "d", 
+    #                                     "", "", "e", "f", "g", "h", 
+    #                                     "", "","i", "j", "k", "l", 
+    #                                     "", "", "m", "n", "o", "p", "")), 
+    #                                theme = theme(plot.tag = element_text(size = 30, face = "bold")))
+
+
+
+
+
+```
+
+
+
+
+## Figure 6: MHC-II related transcripts
+
+
+
+
+
+
 
