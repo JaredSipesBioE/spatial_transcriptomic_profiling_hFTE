@@ -1,0 +1,28 @@
+---
+title: "Figures for Spatial Transcriptomics of hFTE"
+output: html_notebook
+---
+
+
+
+# Summary 
+
+The purpose of this R notebook is to create the figures for the paper:
+
+"Spatial Transcriptomic Profiling of the Human Fallopian Tube Epithelium Reveals Region-specific Gene Expression Patterns"
+
+This document uses a GeoMx dataset that has already undergone Quality control and normalization. 
+
+For details, see: geomx_dataset_and_normalization.Rmd
+
+
+
+# Load Packages
+ 
+The following packages are needed for this document. 
+
+
+```{r}
+
+```
+
