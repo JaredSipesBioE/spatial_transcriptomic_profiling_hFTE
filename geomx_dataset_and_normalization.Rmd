@@ -815,9 +815,6 @@ validation_AfterProbeQC <- ProbeQCPassed
 ```
 
 
-
-
-
 ```{r}
 
 save(all_AfterProbeQC, file = "all_AfterProbeQC.Rdata")
@@ -826,5 +823,151 @@ save(discovery_AfterProbeQC, file = "discovery_AfterProbeQC.Rdata")
 
 save(validation_AfterProbeQC, file = "validation_AfterProbeQC.Rdata")
 
+```
+
+
+## 4.3 Create Gene Level Count Data
+
+With our Probe QC steps complete, we will generate a gene-level count matrix. The count for any gene with multiple probes per segment is calculated as the geometric mean of those probes.
+
+```{r}
+
+
+target_anat_all <- aggregateCounts(all_AfterProbeQC)
+target_anat_disc<- aggregateCounts(discovery_AfterProbeQC)
+target_anat_valid<- aggregateCounts(validation_AfterProbeQC)
+
+
+
+# # Check how many unique targets the object has
+# length(unique(featureData(all_AfterProbeQC)[["TargetName"]]))
+# #> [1] 18504
+# 
+# # collapse to targets
+# target_AnatCompData_all <- aggregateCounts(all_AfterProbeQC)
+# dim(all_AfterProbeQC)
+# dim(target_AnatCompData)
+# #> Features  Samples 
+# #>    18504      229
+# exprs(target_AnatCompData)[1:5, 1:2]
+# #>       DSP-1001250007851-H-A02.dcc DSP-1001250007851-H-A03.dcc
+# #> A2M                           485                         262
+# #> NAT2                           15                          18
+# #> ACADM                          31                          15
+# #> ACADS                          27                          17
+# #> ACAT1                          29                          24
+# 
+
+```
+
+
+
+
+
+## 4.4 Limit of Quantitation
+
+In addition to Segment and Probe QC, we also determine the limit of quantification (LOQ) per segment. The LOQ is calculated based on the distribution of negative control probes and is intended to approximate the quantifiable limit of gene expression per segment. Please note that this process is more stable in larger segments. Likewise, the LOQ may not be as accurately reflective of true signal detection rates in segments with low negative probe counts (ex: \<2). The formula for calculating the LOQ in the ith segment is:
+
+$$LOQ_i=geomean(NegProbe_i)∗geoSD(NegProbe_i)^n$$
+
+We typically use 2 geometric standard deviations (n=2) above the geometric mean as the LOQ, which is reasonable for most studies. We also recommend that a minimum LOQ of 2 be used if the LOQ calculated in a segment is below this threshold.
+
+
+## LOQ_calc function
+
+```{r}
+
+## Create a function to calculate LOQ per module tested, then add it to the GeoMx Dataset
+
+LOQ_calc <- function(GeoMxObj = target_anat_all, cutoff = 2, minLOQ = 2){
+  # Calculate LOQ per module tested
+  LOQ <- data.frame(row.names = colnames(GeoMxObj))
+  for(module in modules) {
+    vars <- paste0(c("NegGeoMean_", "NegGeoSD_"),
+                   module)
+    if(all(vars[1:2] %in% colnames(pData(GeoMxObj)))) {
+        LOQ[, module] <-
+            pmax(minLOQ,
+                 pData(GeoMxObj)[, vars[1]] * 
+                     pData(GeoMxObj)[, vars[2]] ^ cutoff)
+    }
+    }
+  pData(GeoMxObj)$LOQ <- LOQ
+  
+  return(GeoMxObj)
+  
+}
+
+## usage example:
+
+#target_anat_all <- LOQ_calc(GeoMxObj = target_anat_all)
+
+# Check 
+
+#target_anat_all$LOQ
+
+```
+
+
+
+Now apply the function to all of the target datasets
+
+
+```{r}
+
+
+target_anat_all <- LOQ_calc(GeoMxObj = target_anat_all)
+target_anat_disc <- LOQ_calc(GeoMxObj = target_anat_disc)
+target_anat_valid <- LOQ_calc(GeoMxObj = target_anat_valid)
+
+```
+
+
+
+## 4.5 Filtering
+
+After determining the limit of quantification (LOQ) per segment, we recommend filtering out either segments and/or genes with abnormally low signal. Filtering is an important step to focus on the true biological data of interest.
+
+We determine the number of genes detected in each segment across the dataset.
+
+
+## FUNCT: create_LOQ_matrix
+
+```{r}
+# this function takes a GeoMx Data object and producesa matrix with number of genes detected in each 
+
+create_LOQ_matrix <- function(GeoMxObj = target_anat_all){
+  LOQ_Mat <- c()
+  for(module in modules) {
+    ind <- fData(GeoMxObj)$Module == module
+    Mat_i <- t(esApply(GeoMxObj[ind, ], MARGIN = 1,
+                       FUN = function(x) {
+                           x > LOQ[, module]
+                       }))
+    LOQ_Mat <- rbind(LOQ_Mat, Mat_i)
+  }
+  
+  
+  LOQ_Mat <- LOQ_Mat[fData(GeoMxObj)$TargetName, ]
+  
+  return(LOQ_Mat)
+        
+}
+
+
+### USAGE:
+##  LOQ_Mat_all <- create_LOQ_matrix(GeoMxObj = target_anat_all)
+
+```
+
+```{r}
+
+
+LOQ_Mat_all <- create_LOQ_matrix(GeoMxObj = target_anat_all)
+  
+LOQ_Mat_disc <- create_LOQ_matrix(GeoMxObj = target_anat_disc)
+
+LOQ_Mat_valid <- create_LOQ_matrix(GeoMxObj = target_anat_valid)
+  
 ```
 
