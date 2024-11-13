@@ -80,9 +80,10 @@ library(knitr)
 library(tidyverse)
 
 
-# read in files
+# read and write excel files
 library(writexl)
 library(here)
+library(openxlsx)
 
 
 # create graphs
@@ -225,9 +226,9 @@ pData(preQC_data) <- pheno_data
 
 preQC_all <- preQC_data[, pData(preQC_data)$Patient != "P6"]
 
-preQC_discovery <-  preQC_data[, pData(preQC_data)$dataset == "discovery"]
+preQC_discovery <-  preQC_all[, pData(preQC_all)$dataset == "discovery"]
 
-preQC_validation <- preQC_data[, pData(preQC_data)$dataset == "validation"]
+preQC_validation <- preQC_all[, pData(preQC_all)$dataset == "validation"]
 
 
 ```
@@ -969,5 +970,629 @@ LOQ_Mat_disc <- create_LOQ_matrix(GeoMxObj = target_anat_disc)
 
 LOQ_Mat_valid <- create_LOQ_matrix(GeoMxObj = target_anat_valid)
   
+```
+
+
+
+
+
+
+### 4.5.2 Segment Gene Detection
+
+We first filter out segments with exceptionally low signal. These segments will have a small fraction of panel genes detected above the LOQ relative to the other segments in the study. Let's visualize the distribution of segments with respect to their % genes detected:
+
+
+## FUNCT: gene_detection_rate()
+
+
+```{r}
+
+gene_detection_rate <- function(GeoMxObj = target_anat_all, LOQ_Mat = LOQ_Mat_all){
+  # Save detection rate information to pheno data
+  pData(GeoMxObj)$GenesDetected <- 
+    colSums(LOQ_Mat, na.rm = TRUE)
+  pData(GeoMxObj)$GeneDetectionRate <-
+    pData(GeoMxObj)$GenesDetected / nrow(GeoMxObj)
+
+  # Determine detection thresholds: 1%, 5%, 10%, 15%, >15%
+  pData(GeoMxObj)$DetectionThreshold <- 
+    cut(pData(GeoMxObj)$GeneDetectionRate,
+        breaks = c(0, 0.01, 0.05, 0.1, 0.15, 0.20, 0.25, 1),
+        labels = c("<1%", "1-5%", "5-10%", "10-15%", "16%-20%", "21%-25%", ">25%"))
+  
+  return(GeoMxObj)
+}
+
+
+```
+
+
+```{r}
+target_anat_all <- gene_detection_rate(GeoMxObj = target_anat_all, LOQ_Mat = LOQ_Mat_all)
+
+target_anat_disc <- gene_detection_rate(GeoMxObj = target_anat_disc, LOQ_Mat = LOQ_Mat_disc)
+
+target_anat_valid <- gene_detection_rate(GeoMxObj = target_anat_valid, LOQ_Mat = LOQ_Mat_valid)
+
+
+
+```
+
+
+## FUNCT: gene_detection_plot()
+
+```{r}
+
+
+gene_detection_plot <- function(GeoMxObj = target_anat_all){
+  # stacked bar plot of different cut points (1%, 5%, 10%, 15%)
+  plot <- ggplot(pData(GeoMxObj),
+       aes(x = DetectionThreshold)) +
+    geom_bar(aes(fill = Patient)) +
+    geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+    theme_bw() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    labs(x = "Gene Detection Rate",
+         y = "Segments, #",
+         fill = "Segment Type")
+  
+  return(plot)
+  
+}
+
+
+
+```
+
+
+```{r fig.height=6, fig.width=12}
+
+d_all <- gene_detection_plot(GeoMxObj = target_anat_all) + ggtitle("All")
+
+d_disc <- gene_detection_plot(GeoMxObj = target_anat_disc) + ggtitle("discovery")
+
+d_valid <- gene_detection_plot(GeoMxObj = target_anat_valid) + ggtitle("validation")
+
+
+((d_disc / d_valid) | d_all)
+ 
+
+
+```
+
+
+
+
+We can also create a table to review whether ciliated or secretory is most impacted.
+
+```{r}
+
+# cut percent genes detected from above
+# kable(table(pData(target_AnatCompData)$DetectionThreshold,
+#             pData(target_AnatCompData)$segment))
+# 
+# 
+# kable(table(pData(target_AnatCompData)$DetectionThreshold,
+#             pData(target_AnatCompData)$region))
+
+```
+
+
+
+In this example, we choose to remove segments with less than **10%** of the genes detected. Generally, 5-10% detection is a reasonable segment filtering threshold. However, based on the experimental design (e.g. segment types, size, nuclei) and tissue characteristics (e.g. type, age), these guidelines may require adjustment.
+
+```{r}
+
+
+## ALL
+
+target_anat_all_0.1 <- target_anat_all[, pData(target_anat_all)$GeneDetectionRate >= .1]
+print("All")
+dim(target_anat_all_0.1) - dim(target_anat_all)
+
+
+## Disc
+
+target_anat_disc_0.1 <- target_anat_disc[, pData(target_anat_disc)$GeneDetectionRate >= .1]
+
+print("Discovery")
+dim(target_anat_disc_0.1) - dim(target_anat_disc)
+
+
+## Disc
+
+target_anat_valid_0.1 <- target_anat_valid[, pData(target_anat_valid)$GeneDetectionRate >= .1]
+
+print("Validation")
+dim(target_anat_valid_0.1) - dim(target_anat_valid)
+
+
+
+
+```
+Overall, the whole dataset results in two fewer samples being removed compared to discovery and validation seprately. 
+
+```{r}
+
+# ALL
+
+count_mat_filter_all <- dplyr::count(pData(target_anat_all_0.1), Patient, region = shortRegion, segment)
+# gather the data and plot in order: class, slide name, region, segment
+test_gr_all <- gather_set_data(count_mat_filter_all, 1:3)
+
+# Discovery
+
+count_mat_filter_disc <- dplyr::count(pData(target_anat_disc_0.1), Patient, region = shortRegion, segment)
+test_gr_disc <- gather_set_data(count_mat_filter_disc, 1:3)
+
+# Validation
+
+count_mat_filter_valid <- dplyr::count(pData(target_anat_valid_0.1), Patient, region = shortRegion, segment)
+test_gr_valid <- gather_set_data(count_mat_filter_valid, 1:3)
+
+
+```
+
+
+```{r fig.height=6, fig.width=12}
+
+sankey_diagram <- function(test_gr = test_gr_all, count_mat = count_mat_filter_all){
+  plot <- ggplot(test_gr, aes(x, id = id, split = y, value = n)) +
+    geom_parallel_sets(aes(fill = region), alpha = 0.5, axis.width = 0.1) +
+    geom_parallel_sets_axes(axis.width = 0.2) +
+    geom_parallel_sets_labels(color = "white", size = 9) +
+    theme_classic(base_size = 19) + 
+    theme(legend.position = "bottom",
+          axis.ticks.y = element_blank(),
+          axis.line = element_blank(),
+          axis.text.y = element_blank()) +
+    scale_y_continuous(expand = expansion(0)) + 
+    scale_x_discrete(expand = expansion(0)) +
+    labs(title = "Segment Distribution After QC", x = "", y = "", fill = "Region") +
+    annotate(geom = "segment", x = 3.3, xend = 3.3,
+             y = 0, yend = 100, lwd = 2) +
+    annotate(geom = "text", x = 3.2, y = 55, angle = 90, size = 8,
+             hjust = 0.5, label = paste0(sum(count_mat$n), " segments"))
+  
+  return(plot)
+} 
+
+
+text_size = 40
+All_Sankey <- sankey_diagram(test_gr = test_gr_all, count_mat = count_mat_filter_all) + ggtitle("All") +  theme(text=element_text(size=text_size)) + theme(plot.title = element_text(size=30))
+
+Disc_Sankey <- sankey_diagram(test_gr = test_gr_disc, count_mat = count_mat_filter_disc) + ggtitle("Discovery") +theme(text=element_text(size=text_size))  + theme(plot.title = element_text(size=30))
+
+
+
+Valid_Sankey <- sankey_diagram(test_gr = test_gr_valid, count_mat = count_mat_filter_valid) + ggtitle("Validation") + theme(text=element_text(size=text_size))  + theme(plot.title = element_text(size=30))
+
+
+
+(Disc_Sankey | Valid_Sankey) /guide_area() + plot_layout(heights = c(10, 1), guides = 'collect')
+
+
+
+```
+
+
+### 4.5.2 Gene Detection Rate.
+
+Next, we determine the detection rate for genes across the study. To illustrate this idea, we create a small gene list (goi) to review.
+
+We can see that individual genes are detected to varying degrees in the segments, which leads us to the next QC we will perform across the dataset.
+
+```{r}
+
+
+#Detection Rate for O.1 filter
+
+library(scales) # for percent
+
+
+calc_detection_rate <- function(GeoMxObj = target_anat_all_0.1, LOQ_Mat = LOQ_Mat_all){
+  LOQ_Mat_0.1 <- LOQ_Mat[, colnames(GeoMxObj)]
+  fData(GeoMxObj)$DetectedSegments <- rowSums(LOQ_Mat_0.1, na.rm = TRUE)
+  fData(GeoMxObj)$DetectionRate <-
+    fData(GeoMxObj)$DetectedSegments / nrow(pData(GeoMxObj))
+  
+  return(GeoMxObj)
+}
+
+
+target_anat_all_0.1 <- calc_detection_rate(GeoMxObj = target_anat_all_0.1, LOQ_Mat = LOQ_Mat_all)
+target_anat_disc_0.1 <- calc_detection_rate(GeoMxObj = target_anat_disc_0.1, LOQ_Mat = LOQ_Mat_disc)
+target_anat_valid_0.1 <- calc_detection_rate(GeoMxObj = target_anat_valid_0.1, LOQ_Mat = LOQ_Mat_valid)
+
+
+```
+
+
+
+```{r}
+
+
+
+# # Gene of interest detection table
+# goi <- c("PDCD1", "CD274", "IFNG", "CD8A", "CD68", "EPCAM",
+#          "KRT18", "CLDN8",
+#          "FOXJ1", "PAX8", "LGR5")
+# goi_df_0.1 <- data.frame(
+#     Gene = goi,
+#     Number = fData(target_AnatCompData_0.1)[goi, "DetectedSegments"],
+#     DetectionRate = percent(fData(target_AnatCompData_0.1)[goi, "DetectionRate"]))
+# 
+# 
+# goi_df_0.1
+```
+
+
+### 4.5.3 Gene Filtering
+
+We will graph the total number of genes detected in different percentages of segments. Based on the visualization below, we can better understand global gene detection in our study and select how many low detected genes to filter out of the dataset. Gene filtering increases performance of downstream statistical tests and improves interpretation of true biological signal.
+
+
+```{r}
+
+
+plot_detection_rate <- function(GeoMxObj = target_anat_all_0.1)
+  {plot_detect <- data.frame(Freq = c(1, 5, 10, 20, 30, 50))
+  plot_detect$Number <-
+      unlist(lapply(c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5),
+                    function(x) {sum(fData(GeoMxObj)$DetectionRate >= x)}))
+  plot_detect$Rate <- plot_detect$Number / nrow(fData(GeoMxObj))
+  rownames(plot_detect) <- plot_detect$Freq
+  
+  plot <- ggplot(plot_detect, aes(x = as.factor(Freq), y = Rate, fill = Rate)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = formatC(Number, format = "d", big.mark = ",")),
+                vjust = 1.6, color = "black", size = 4) +
+      scale_fill_gradient2(low = "orange2", mid = "lightblue",
+                           high = "dodgerblue3", midpoint = 0.65,
+                           limits = c(0,1),
+                           labels = scales::percent) +
+      theme_bw() +
+      scale_y_continuous(labels = scales::percent, limits = c(0,1),
+                         expand = expansion(mult = c(0, 0))) +
+      labs(x = "% of Segments",
+           y = "Genes Detected, % of Panel > LOQ")
+  
+  return(plot)
+  
+}
+
+plot_detection_rate(GeoMxObj = target_anat_all_0.1) + ggtitle("All")
+
+plot_detection_rate(GeoMxObj = target_anat_disc_0.1)  + ggtitle("Discovery")
+
+plot_detection_rate(GeoMxObj = target_anat_valid_0.1)  + ggtitle("Validation")
+
+
+```
+
+
+We typically set a % Segment cutoff ranging from 5-20% based on the biological diversity of our dataset. For this study, we will select 10% as our cutoff. In other words, we will focus on the genes detected in at least 10% of our segments; we filter out the remainder of the targets.
+
+Note: if we know that a key gene is represented in only a small number of segments (\<10%) due to biological diversity, we may select a different cutoff or keep the target gene by manually selecting it for inclusion in the data object.
+
+
+
+```{r}
+
+gene_filter <- function(GeoMxObj = target_anat_all_0.1){
+  negativeProbefData <- subset(fData(GeoMxObj), CodeClass == "Negative")
+  neg_probes <- unique(negativeProbefData$TargetName)
+  GeoMxObj_new <- 
+      GeoMxObj[fData(GeoMxObj)$DetectionRate >= 0.1 |
+                          fData(GeoMxObj)$TargetName %in% neg_probes, ]
+  return(GeoMxObj_new)
+  }
+
+
+
+## ALL
+target_anat_all_0.1_genefilter <- gene_filter(GeoMxObj = target_anat_all_0.1)
+
+dim(target_anat_all_0.1_genefilter) - dim(target_anat_all_0.1)
+
+## 786 genes removed
+
+
+## Discovery
+target_anat_disc_0.1_genefilter <- gene_filter(GeoMxObj = target_anat_disc_0.1)
+
+dim(target_anat_disc_0.1_genefilter) - dim(target_anat_disc_0.1)
+
+## 786 genes removed
+
+
+## Validation
+
+target_anat_valid_0.1_genefilter <- gene_filter(GeoMxObj = target_anat_valid_0.1)
+
+dim(target_anat_valid_0.1_genefilter) - dim(target_anat_valid_0.1)
+
+## 794 genes removed
+
+
+
+
+```
+
+
+```{r}
+
+# 
+# Anat_0.1seg_0.1gene <- target_AnatCompData_0.1_genefilter
+# 
+# save(Anat_0.1seg_0.1gene, file = "all_0.1seg_0.1gene.Rdata")
+
+```
+
+
+
+### 4.6 Export Pre-normalized Expression and Annotation Data
+
+
+#### 4.6.1 FUNCT: print_anat_comp_annotations()
+
+The following functions takes the dataset and exports the columns 
+
+```{r}
+
+
+
+print_anat_comp_annotations <- function(data = NULL,  file_path = ""){
+  col_to_export = c("segment", "slide name", "region", "Patient")
+
+  df_to_export <- pData(data)[, col_to_export] |>
+    dplyr::rename(patient = Patient,
+           full_name = `slide name`,
+           SegmentLabel = segment,) |>
+    mutate(
+      region_num = fct_recode(region,
+                              "1" = "Fimbria",
+                              "2" = "Infundibulum",
+                              "3" = "Ampulla",
+                              "4" = "Isthmus")
+    )
+
+  openxlsx::write.xlsx(df_to_export, file_path, rowNames = TRUE, colNames = TRUE)
+}
+
+```
+
+#### 4.6.2 Export Annotations
+
+```{r}
+
+# 
+# print_anat_comp_annotations(target_anat_valid_0.1_genefilter, here::here("Validation_anatomical_comparison_9-5-2024.xlsx"))
+# 
+# print_anat_comp_annotations(target_anat_all_0.1_genefilter, here::here("All_anatomical_comparison_9-5-2024.xlsx"))
+```
+
+
+#### 4.6.3 FUNCT: print_TargetCountMatrix()
+
+The following functions takes the dataset and exports the columns 
+
+```{r}
+
+
+print_TargetCountMatrix <- function(matrix = NULL, file_path = ""){
+  wb <- createWorkbook()
+  addWorksheet(wb, sheetName = "TargetCountMatrix")
+  
+  
+  writeData(wb, sheet = "TargetCountMatrix", x = matrix, 
+            colNames = TRUE, rowNames = TRUE)
+  
+  writeData(wb, sheet = "TargetCountMatrix", x = "TargetName", startCol = 1, startRow = 1)
+  
+  # Save the workbook to an Excel file
+  saveWorkbook(wb, file = file_path, overwrite = TRUE)
+}
+
+
+```
+
+#### 4.6.3 FUNCT: print_TargetCountMatrix()
+
+
+```{r}
+# print_TargetCountMatrix(matrix = exprs(target_anat_valid_0.1_genefilter), 
+#                         file_path = here::here("Exprs_Validation_Anatomical_Comparison_9-5-2024.xlsx"))
+# 
+# 
+# print_TargetCountMatrix(matrix = exprs(target_anat_all_0.1_genefilter), 
+#                         file_path = here::here("Exprs_All_Anatomical_Comparison_9-5-2024.xlsx"))
+```
+
+# 5 Normalization
+
+We will now normalize the GeoMx data for downstream visualizations and differential expression. The two common methods for normalization of DSP-NGS RNA data are i) quartile 3 (Q3) or ii) background normalization.
+
+Both of these normalization methods estimate a normalization factor per segment to bring the segment data distributions together. More advanced methods for normalization and modeling are under active development. However, for most studies, these methods are sufficient for understanding differences between biological classes of segments and samples.
+
+Q3 normalization is typically the preferred normalization strategy for most DSP-NGS RNA studies. Given the low negative probe counts in this particular dataset as shown during Segment QC, we would further avoid background normalization as it may be less stable.
+
+Before normalization, we will explore the relationship between the upper quartile (Q3) of the counts in each segment with the geometric mean of the negative control probes in the data. Ideally, there should be a separation between these two values to ensure we have stable measure of Q3 signal. If you do not see sufficient separation between these values, you may consider more aggressive filtering of low signal segments/genes.
+
+```{r}
+
+quantileNorm <- function(object, toElt = "exprs_norm", fromElt = "exprs"){
+  # generate a new object with just relevant expression data
+  # exprs_data <- exprs(object)
+  
+  #rank each item in the object (1 for first expression level, 2 for second, etc.)
+  assayDataElement(object, "rank" , validate = TRUE) <- apply(assayDataElement(object, "exprs"),2,rank,ties.method="min")
+  
+  # #sort based on expression level
+  assayDataElement(object, "data_sorted" , validate = TRUE) <- apply(assayDataElement(object, "exprs"), 2, sort)
+
+  # find the mean for each row in the sorted_data
+  data_mean <- apply(assayDataElement(object, "data_sorted"), 1, mean)
+
+
+  index_to_mean <- function(my_index, my_mean)
+  {
+    return(my_mean[my_index])
+  }
+
+
+  # for each ranked data column, for each number (n) in that column, 
+  # apply to it the (nth) mean in the data_mean list
+  assayDataElement(object, toElt, validate = TRUE) <- apply(assayDataElement(object, "rank"), 2, index_to_mean, my_mean=data_mean)
+  
+
+  return(object)
+}
+```
+
+
+```{r}
+
+all_q_norm <- quantileNorm(target_anat_all_0.1_genefilter, toElt = "q_norm")
+
+disc_q_norm <- quantileNorm(target_anat_disc_0.1_genefilter, toElt = "q_norm")
+
+valid_q_norm <- quantileNorm(target_anat_valid_0.1_genefilter, toElt = "q_norm")
+
+```
+
+
+```{r}
+
+count_mat_valid_qnorm <- dplyr::count(pData(valid_q_norm), Patient, region, segment)
+
+kable(count_mat_valid_qnorm)
+
+
+```
+
+
+```{r}
+
+save(all_q_norm, file =
+       here::here("all_q_norm.Rdata"))
+
+
+save(disc_q_norm, file =
+       here::here("disc_q_norm.Rdata"))
+
+
+save(valid_q_norm, file =
+       here::here("valid_q_norm.Rdata"))
+
+
+```
+
+
+To demonstrate the effects of normalization, we graph representative box plots of the data for individual segments before and after normalization.
+
+```{r}
+
+compare_norm_plots <- function(GeoMxObj = all_q_norm){
+  boxplot(exprs(GeoMxObj)[,1:50],
+          col = "#9EDAE5", main = "Raw Counts",
+          log = "y", names = 1:50, xlab = "Segment",
+          ylab = "Counts, Raw")
+  
+  
+  boxplot(assayDataElement(GeoMxObj[,1:50], elt = "q_norm"),
+          col = "#2CA02C", main = "Quantile Norm Counts",
+          log = "y", names = 1:50, xlab = "Segment",
+          ylab = "Counts, Quantile Normalized")
+}
+
+
+
+compare_norm_plots(GeoMxObj = all_q_norm)
+
+compare_norm_plots(GeoMxObj = disc_q_norm)
+
+compare_norm_plots(GeoMxObj = valid_q_norm)
+```
+
+
+# 6. Unsupervised Analysis
+
+## 6.1 UMAP & t-SNE
+
+One common approach to understanding high-plex data is dimension reduction. Two common methods are UMAP and tSNE, which are non-orthogonally constrained projections that cluster samples based on overall gene expression. In this study, we see by either UMAP (from the umap package) or tSNE (from the Rtsne package), clusters of segments related to structure (glomeruli or tubules) and disease status (normal or diabetic kidney disease).
+
+```{r}
+# 
+# # update defaults for umap to contain a stable random_state (seed)
+# custom_umap <- umap::umap.defaults
+# custom_umap$random_state <- 42
+# 
+# 
+# umap_out2 <-
+#     umap(t(log2(assayDataElement(quantile_AnatCompData , elt = "q_norm"))),  
+#          config = custom_umap)
+# pData(quantile_AnatCompData)[, c("UMAP1", "UMAP2")] <- umap_out2$layout[, c(1,2)]
+# ggplot(pData(quantile_AnatCompData),
+#        aes(x = UMAP1, y = UMAP2, color = region, shape = segment)) +
+#     geom_point(size = 3) +
+#     theme_bw()+
+#   geom_mark_ellipse(aes(x = UMAP1, y = UMAP2, fill = Patient), inherit.aes = FALSE)
+
+```
+
+```{r fig.height=6, fig.width=8}
+
+# # run tSNE
+# set.seed(42) # set the seed for tSNE as well
+# 
+# 
+# tsne_out2 <-
+#     Rtsne(t(log2(assayDataElement(quantile_AnatCompData , elt = "q_norm"))),
+#           perplexity = ncol(quantile_AnatCompData)*.15)
+# pData(quantile_AnatCompData)[, c("tSNE1", "tSNE2")] <- tsne_out2$Y[, c(1,2)]
+# ggplot(pData(quantile_AnatCompData),
+#        aes(x = tSNE1, y = tSNE2)) +
+#     geom_point(aes( color = Patient, shape = segment), size = 3) +
+#     theme_bw()
+
+```
+## 6.2 Clustering high CV Genes
+
+Another approach to explore the data is to calculate the coefficient of variation (CV) for each gene ($$g$$) using the formula $$CV_g=SD_g/mean_g$$ . We then identify genes with high CVs that should have large differences across the various profiled segments. This unbiased approach can reveal highly variable genes across the study.
+
+We plot the results using unsupervised hierarchical clustering, displayed as a heatmap.
+
+
+```{r}
+
+# library(pheatmap)
+# assayDataElement(object = quantile_AnatCompData, elt = "log_q") <-
+#     assayDataApply(quantile_AnatCompData, 2, FUN = log, base = 2, elt = "q_norm")
+# 
+# # create CV function
+# calc_CV <- function(x) {sd(x) / mean(x)}
+# CV_dat <- assayDataApply(quantile_AnatCompData,
+#                          elt = "log_q", MARGIN = 1, calc_CV)
+# # show the highest CD genes and their CV values
+# sort(CV_dat, decreasing = TRUE)[1:5]
+# #>   CAMK2N1    AKR1C1      AQP2     GDF15       REN 
+# #> 0.5886006 0.5114973 0.4607206 0.4196469 0.4193216
+# 
+# # Identify genes in the top 3rd of the CV values
+# GOI <- names(CV_dat)[CV_dat > quantile(CV_dat, 0.8)]
+# pheatmap(assayDataElement(quantile_AnatCompData[GOI, ], elt = "log_q"),
+#          scale = "row", 
+#          show_rownames = FALSE, show_colnames = FALSE,
+#          border_color = NA,
+#          clustering_method = "average",
+#          clustering_distance_rows = "correlation",
+#          clustering_distance_cols = "correlation",
+#          breaks = seq(-3, 3, 0.05),
+#          color = colorRampPalette(c("red", "yellow2", "green3"))(120),
+#          annotation_col = 
+#              pData(target_AnatCompData)[, c("Patient", "segment", "region")])
+# 
+
 ```
 
